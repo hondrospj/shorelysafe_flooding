@@ -1,1 +1,62 @@
+name: Update All Peaks
 
+on:
+  workflow_dispatch:
+    inputs:
+      backfill_from:
+        description: "Optional backfill from year"
+        required: false
+      backfill_to:
+        description: "Optional backfill to year"
+        required: false
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Validate gauges
+        run: node tools/validate_gauges.js
+
+      - name: Run peaks updater for all gauges
+        run: |
+          node -e '
+            const fs = require("fs");
+            const gauges = JSON.parse(fs.readFileSync("data/gauges.json","utf8"));
+            const { execSync } = require("child_process");
+
+            for (const g of gauges) {
+              let cmd = `node tools/update_peaks_navd88.js --gauge=${g.slug}`;
+              if (process.env.BACKFILL_FROM && process.env.BACKFILL_TO) {
+                cmd += ` --backfill-from=${process.env.BACKFILL_FROM} --backfill-to=${process.env.BACKFILL_TO}`;
+              }
+              console.log(cmd);
+              execSync(cmd, { stdio: "inherit" });
+            }
+          '
+        env:
+          BACKFILL_FROM: ${{ inputs.backfill_from }}
+          BACKFILL_TO: ${{ inputs.backfill_to }}
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/gauges/
+          if git diff --cached --quiet; then
+            echo "No changes."
+            exit 0
+          fi
+          git commit -m "Update peaks caches"
+          git push
