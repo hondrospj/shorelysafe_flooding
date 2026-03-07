@@ -8,6 +8,8 @@
     "noaaId": "8534720",
     "noaaAcronym": "ATLN4",
     "primaryParam": "72279",
+    "lat": 39.355,
+    "lon": -74.438,
     "thresholdsMLLW": {
       "minorLow": 5.7,
       "moderateLow": 6.7,
@@ -18,6 +20,7 @@
       "MSL": -2.1,
       "MHHW": -4.41,
       "NAVD88": -2.44
-    }
+    },
+    "topTenMLLW": []
   }
 ]
