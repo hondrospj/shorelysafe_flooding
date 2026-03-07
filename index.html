@@ -907,10 +907,10 @@ a.brand *{
         <img src="assets/shorelysafe" alt="Cupajoe logo">
       </div>
 
-      <div class="brandTitle">
-        <div class="kicker">USGS 01412150 · Sea Bright, NJ</div>
-        <div class="name">Sea Bright Tidal Flooding Dashboard</div>
-      </div>
+     <div class="brandTitle">
+  <div class="kicker" id="brandKicker">Loading gauge…</div>
+  <div class="name" id="brandName">Tidal Flooding Dashboard</div>
+</div>
     </a>
 
     <div class="topRight">
@@ -1277,82 +1277,48 @@ a.brand *{
 const TZ = "America/New_York";
 
 /* =========================
-DATUM SYSTEM (MLLW-based offsets)
-- We convert everything through MLLW using offsets from  table.
-datum_ft = mllw_ft + OFFSET_FROM_MLLW[datum]
+GAUGE-DRIVEN CONFIG
 ========================= */
 
-let DISPLAY_DATUM = "MLLW"; // MLLW | NAVD88 | MSL | MHHW
+let GAUGE = null;
+let DISPLAY_DATUM = "MLLW";
 
-const DATUMS = ["MLLW", "NAVD88", "MSL", "MHHW"]; // cycle order
+const DATUMS = ["MLLW", "NAVD88", "MSL", "MHHW"];
 
-// From  table (Gauge Zero row): datum = MLLW + offset
-const OFFSET_FROM_MLLW = {
-  MLLW:   0.00,
-  NAVD88: -2.10,
-  MSL:    -1.87,
-  MHHW:   -3.88
+let OFFSET_FROM_MLLW = {
+  MLLW: 0,
+  NAVD88: 0,
+  MSL: 0,
+  MHHW: 0
 };
 
-function mllwToDatum(ft, datum){
-  return ft + (OFFSET_FROM_MLLW[datum] ?? 0);
-}
-function datumToMllw(ft, datum){
-  return ft - (OFFSET_FROM_MLLW[datum] ?? 0);
-}
-function datumToDatum(ft, fromDatum, toDatum){
-  const mllw = datumToMllw(ft, fromDatum);
-  return mllwToDatum(mllw, toDatum);
-}
-    // Convenience helpers (you reference these later)
-function mllwToNavd(mllwFt){
-  return datumToDatum(mllwFt, "MLLW", "NAVD88");
-}
-function navdToMllw(navdFt){
-  return datumToDatum(navdFt, "NAVD88", "MLLW");
-}
+let USGS_SITE = null;
+let USGS_PARAM_PRIMARY = "72279";
 
+let COOPS_STATION = null;
+let COOPS_APP = "shorelysafe";
+let COOPS_DATUM = "MLLW";
+let COOPS_INTERVAL = "6";
+let COOPS_TZ = "gmt";
 
-// Helpers used across the app ( internal truth stays NAVD88 where needed)
-function toDisplayFtFromNavd(navdFt){
-  return datumToDatum(navdFt, "NAVD88", DISPLAY_DATUM);
-}
-function toDisplayFtFromMllw(mllwFt){
-  return datumToDatum(mllwFt, "MLLW", DISPLAY_DATUM);
-}
-function fromDisplayToNavd(displayFt){
-  return datumToDatum(displayFt, DISPLAY_DATUM, "NAVD88");
-}
+let NOAA_STATION_TIDECLOCK = null;
 
+const CREST_WINDOW_HOURS = 2;
+const REQUIRE_WITHIN_HOURS = 1;
 
-/* USGS observed (15-min IV). */
-const USGS_SITE="01407600";
-
-/* Water level ONLY (tide elevation NAVD88). */
-const USGS_PARAM_PRIMARY = "72279";
-
-/* NOAA CO-OPS predictions */
-const COOPS_STATION="8531804";
-const COOPS_APP="cupajoe.live";
-const COOPS_DATUM="MLLW";
-const COOPS_INTERVAL="6";
-const COOPS_TZ="gmt";
-
-      /* Tide-clock settings for crest-anchored highs (NOAA hilo predictions) */
-const NOAA_STATION_TIDECLOCK = "8531804"; // same station as COOPS_STATION (Sea Bright)
-const CREST_WINDOW_HOURS = 2;             // search max within ±2 hours of predicted crest
-const REQUIRE_WITHIN_HOURS = 1;           // must have at least one obs point within ±1 hour
-
-
-/* Flood thresholds (from  table) */
-const THRESH = {
-  MLLW:  { minorLow:5.20, moderateLow:6.20, majorLow:7.20 },
-  NAVD88:{ minorLow:3.10, moderateLow:4.10, majorLow:5.10 },
-  MSL:   { minorLow:3.33, moderateLow:4.33, majorLow:5.33 },
-  MHHW:  { minorLow:1.32, moderateLow:2.32, majorLow:3.32 }
+let THRESH = {
+  MLLW: { minorLow: 0, moderateLow: 0, majorLow: 0 },
+  NAVD88: { minorLow: 0, moderateLow: 0, majorLow: 0 },
+  MSL: { minorLow: 0, moderateLow: 0, majorLow: 0 },
+  MHHW: { minorLow: 0, moderateLow: 0, majorLow: 0 }
 };
 
-      const HOUR_MS = 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const PEAK_MIN_SEP_MINUTES = 300;
+const LIVE_START_ISO = "2026-01-01T00:00:00Z";
+
+let ALERT_POINT = { lat: 39.355, lon: -74.438 };
+let TOP_TEN_MLLW = [];
 
 function floorToHourMs(tMs){
   return Math.floor(tMs / HOUR_MS) * HOUR_MS;
@@ -1368,19 +1334,17 @@ function buildHourlyLabels(startISO, endISO){
   return labels;
 }
 
-// Pick the LAST value observed within each hour (looks best for water level)
 function seriesToHourlyLast(series){
-  const m = new Map(); // hourMs -> ft
+  const m = new Map();
   for(const p of (series || [])){
     const tMs = new Date(p.t).getTime();
     const ft  = Number(p.ft);
     if(!Number.isFinite(tMs) || !Number.isFinite(ft)) continue;
-    m.set(floorToHourMs(tMs), ft); // later points overwrite earlier => "last in hour"
+    m.set(floorToHourMs(tMs), ft);
   }
   return m;
 }
 
-// Snap a series to the hourly labels (no interpolation, just exact hour hits)
 function mapToHourlyValues(labels, hourMap){
   return labels.map(iso=>{
     const h = floorToHourMs(new Date(iso).getTime());
@@ -1388,85 +1352,156 @@ function mapToHourlyValues(labels, hourMap){
   });
 }
 
+function mllwToDatum(ft, datum){
+  return ft + (OFFSET_FROM_MLLW[datum] ?? 0);
+}
+function datumToMllw(ft, datum){
+  return ft - (OFFSET_FROM_MLLW[datum] ?? 0);
+}
+function datumToDatum(ft, fromDatum, toDatum){
+  const mllw = datumToMllw(ft, fromDatum);
+  return mllwToDatum(mllw, toDatum);
+}
+function mllwToNavd(mllwFt){
+  return datumToDatum(mllwFt, "MLLW", "NAVD88");
+}
+function navdToMllw(navdFt){
+  return datumToDatum(navdFt, "NAVD88", "MLLW");
+}
+function toDisplayFtFromNavd(navdFt){
+  return datumToDatum(navdFt, "NAVD88", DISPLAY_DATUM);
+}
+function toDisplayFtFromMllw(mllwFt){
+  return datumToDatum(mllwFt, "MLLW", DISPLAY_DATUM);
+}
+function fromDisplayToNavd(displayFt){
+  return datumToDatum(displayFt, DISPLAY_DATUM, "NAVD88");
+}
 
-/* Peak counting settings */
-const PEAK_MIN_SEP_MINUTES = 300;
+function buildThresholdsFromGauge(g){
+  const m = g.thresholdsMLLW;
+  const off = g.offsetsFromMLLW;
+  return {
+    MLLW: {
+      minorLow: +m.minorLow.toFixed(2),
+      moderateLow: +m.moderateLow.toFixed(2),
+      majorLow: +m.majorLow.toFixed(2)
+    },
+    NAVD88: {
+      minorLow: +(m.minorLow + off.NAVD88).toFixed(2),
+      moderateLow: +(m.moderateLow + off.NAVD88).toFixed(2),
+      majorLow: +(m.majorLow + off.NAVD88).toFixed(2)
+    },
+    MSL: {
+      minorLow: +(m.minorLow + off.MSL).toFixed(2),
+      moderateLow: +(m.moderateLow + off.MSL).toFixed(2),
+      majorLow: +(m.majorLow + off.MSL).toFixed(2)
+    },
+    MHHW: {
+      minorLow: +(m.minorLow + off.MHHW).toFixed(2),
+      moderateLow: +(m.moderateLow + off.MHHW).toFixed(2),
+      majorLow: +(m.majorLow + off.MHHW).toFixed(2)
+    }
+  };
+}
 
-      /* Historic filter: switch to live after this date */
-const LIVE_START_ISO = "2026-01-01T00:00:00Z"; // use >= Jan 1 2026
+function getGaugeSlugFromURL(){
+  const qp = new URLSearchParams(location.search).get("g");
+  if(qp) return qp;
 
+  const parts = location.pathname.split("/").filter(Boolean);
+  const idx = parts.indexOf("gauges");
+  if(idx >= 0 && parts[idx + 1]) return parts[idx + 1];
 
+  return "absecon-channel";
+}
 
-/* NWS alerts point */
-const ALERT_POINT={lat:39.2325, lon:-75.0380};
+async function loadGaugeCatalog(){
+  const res = await fetch("data/gauges.json?v=" + Date.now(), { cache: "no-store" });
+  if(!res.ok) throw new Error("Could not load data/gauges.json");
+  return res.json();
+}
 
+function gaugeDataPath(fileName){
+  return `data/gauges/${GAUGE.slug}/${fileName}`;
+}
 
-/* Top ten list (MLLW) — FIXED (shifted +2.10 ft from NAVD) */
-const TOP_TEN_MLLW = [
-  {date:"10-29-2012", ft:11.73},
-  {date:"12-11-1992", ft:9.43},
-  {date:"08-28-2011", ft:8.42},
-  {date:"03-06-1962", ft:7.73},
-  {date:"03-13-2010", ft:7.45},
-  {date:"01-13-2024", ft:7.35},
-  {date:"10-27-2018", ft:7.30},
-  {date:"12-23-2022", ft:7.29},
-  {date:"02-02-2021", ft:7.26},
-  {date:"01-24-2017", ft:7.18}
-];
+async function initGaugeConfig(){
+  const slug = getGaugeSlugFromURL();
+  const gauges = await loadGaugeCatalog();
+  window.__GAUGE_CATALOG = gauges;
+  const g = gauges.find(x => x.slug === slug);
+  if(!g) throw new Error(`Unknown gauge slug: ${slug}`);
 
-    /* =========================
+  GAUGE = g;
+
+  OFFSET_FROM_MLLW = {
+    MLLW: Number(g.offsetsFromMLLW.MLLW ?? 0),
+    NAVD88: Number(g.offsetsFromMLLW.NAVD88 ?? 0),
+    MSL: Number(g.offsetsFromMLLW.MSL ?? 0),
+    MHHW: Number(g.offsetsFromMLLW.MHHW ?? 0)
+  };
+
+  THRESH = buildThresholdsFromGauge(g);
+
+  USGS_SITE = String(g.usgsId);
+  USGS_PARAM_PRIMARY = String(g.primaryParam || "72279");
+  COOPS_STATION = String(g.noaaId);
+  NOAA_STATION_TIDECLOCK = String(g.noaaId);
+
+  ALERT_POINT = {
+    lat: Number(g.lat ?? 39.355),
+    lon: Number(g.lon ?? -74.438)
+  };
+
+  TOP_TEN_MLLW = Array.isArray(g.topTenMLLW) ? g.topTenMLLW : [];
+
+  document.title = `${g.shortName}, NJ — Tidal Flooding Dashboard`;
+
+  const brandKicker = document.getElementById("brandKicker");
+  const brandName = document.getElementById("brandName");
+
+  if(brandKicker){
+    brandKicker.textContent = `USGS ${g.usgsId} · NOAA ${g.noaaId} · ${g.shortName}, NJ`;
+  }
+  if(brandName){
+    brandName.textContent = `${g.shortName} Tidal Flooding Dashboard`;
+  }
+}
+
+/* =========================
 MAP — Leaflet gauge map
 ========================= */
-const DEFAULT_GAUGE_ID = "01407600"; // Sea Bright USGS
-const DEFAULT_GAUGE_ZOOM = 12;       // adjust if you want closer (13 = tighter)
-// Edit these whenever you want (lat/lon + label + link)
-const GAUGES = [
-  // --- USGS NJ coastal/estuary network ---
-  { name:"Bivalve (Maurice River at Bivalve)", agency:"USGS", id:"01412150", lat:39.232500, lon:-75.032778 },
-  { name:"South Dennis (Sluice Creek near South Dennis)", agency:"USGS", id:"01411435", lat:39.161667, lon:-74.832222 },
-  { name:"Cape May Harbor (Cape May Harbor at Cape May)", agency:"USGS", id:"01411390", lat:38.948333, lon:-74.888889 },
-  { name:"Stone Harbor (Great Channel at Stone Harbor)", agency:"USGS", id:"01411360", lat:39.056944, lon:-74.765000 },
-  { name:"Avalon (Ingram Thorofare at Avalon)", agency:"USGS", id:"01411355", lat:39.108611, lon:-74.741944 },
-  { name:"Sea Isle (Ludlum Thorofare at Sea Isle City)", agency:"USGS", id:"01411350", lat:39.157778, lon:-74.697778 },
-  { name:"Ocean City (Great Egg Harbor Bay at Ocean City)", agency:"USGS", id:"01411320", lat:39.285833, lon:-74.575556 },
-  { name:"Margate (Beach Thorofare at Margate)", agency:"USGS", id:"01411330", lat:39.337500, lon:-74.513056 },
-  { name:"Atlantic City (Inside Thorofare at US Rt 40)", agency:"USGS", id:"01410560", lat:39.353611, lon:-74.456944 },
-  { name:"USGS Atlantic City (Absecon Channel)", agency:"USGS", id:"01410500", lat:39.3564, lon:-74.4186 },
-
-  { name:"Little Egg Inlet (near Tuckerton)", agency:"USGS", id:"01409335", lat:39.508889, lon:-74.324722 },
-  { name:"Ship Bottom (East Thorofare at Ship Bottom)", agency:"USGS", id:"01409146", lat:39.654167, lon:-74.185833 },
-  { name:"Barnegat Light (Barnegat Bay at Barnegat Light)", agency:"USGS", id:"01409125", lat:39.760833, lon:-74.110556 },
-  { name:"Mantoloking (Barnegat Bay at Mantoloking)", agency:"USGS", id:"01408168", lat:40.040556, lon:-74.054444 },
-  { name:"Manasquan (Watson Creek at Manasquan)", agency:"USGS", id:"01408048", lat:40.111667, lon:-74.044722 },
-  { name:"Belmar (Shark River at Belmar)", agency:"USGS", id:"01407770", lat:40.179167, lon:-74.038333 },
-  { name:"Sea Bright (Shrewsbury River at Sea Bright)", agency:"USGS", id:"01407600", lat:40.365556, lon:-73.974722 },
-  { name:"Keansburg (Raritan Bay at Keansburg)", agency:"USGS", id:"01407081", lat:40.449167, lon:-74.147500 },
-
-  // --- NOAA tide gauges ---
-  { name:"NOAA Cape May", agency:"NOAA", id:"8536110", lat:38.968000, lon:-74.960000 },
-  { name:"NOAA Atlantic City", agency:"NOAA", id:"8534720", lat:39.357000, lon:-74.418000 },
-  { name:"NOAA Sandy Hook", agency:"NOAA", id:"8531680", lat:40.466818, lon:-74.009391 }
-];
-
-
+const DEFAULT_GAUGE_ZOOM = 12;
 
 let _gaugeMap = null;
 let _gaugeLayer = null;
+
+function getAllConfiguredGaugesForMap(){
+  if(!window.__GAUGE_CATALOG || !Array.isArray(window.__GAUGE_CATALOG)) return [];
+  return window.__GAUGE_CATALOG
+    .filter(g => Number.isFinite(Number(g.lat)) && Number.isFinite(Number(g.lon)))
+    .map(g => ({
+      name: g.name,
+      agency: "USGS/NOAA",
+      id: g.usgsId,
+      noaaId: g.noaaId,
+      lat: Number(g.lat),
+      lon: Number(g.lon),
+      slug: g.slug
+    }));
+}
 
 function ensureGaugeMap(){
   const el = document.getElementById("gaugeMap");
   if(!el) return;
 
-  // Leaflet not loaded yet? Bail quietly.
   if(typeof window.L === "undefined"){
     console.warn("Leaflet not loaded (window.L missing).");
     return;
   }
 
-  // Already built
   if(_gaugeMap){
-    // In case accordion opened later, force resize.
     setTimeout(()=>_gaugeMap.invalidateSize(true), 50);
     return;
   }
@@ -1476,33 +1511,32 @@ function ensureGaugeMap(){
     zoomControl: true
   });
 
-  // Base tiles
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18,
     attribution: "&copy; OpenStreetMap"
   }).addTo(_gaugeMap);
 
-  // Markers
   _gaugeLayer = L.layerGroup().addTo(_gaugeMap);
 
+  const gauges = getAllConfiguredGaugesForMap();
   const bounds = [];
 
-  for(const g of GAUGES){
-    const color =
-      (g.agency || "").toUpperCase() === "NOAA" ? "#60a5fa" : "#2dd4bf";
+  for(const g of gauges){
+    const isActive = GAUGE && g.slug === GAUGE.slug;
+    const color = isActive ? "#ef4444" : "#2dd4bf";
 
     const m = L.circleMarker([g.lat, g.lon], {
-      radius: 8,
+      radius: isActive ? 9 : 7,
       weight: 2,
-      color: color,
+      color,
       fillColor: color,
-      fillOpacity: 0.85
+      fillOpacity: 0.9
     });
 
     const popup = `
       <div style="font-weight:900;margin-bottom:6px;">${g.name}</div>
-      <div style="opacity:.85;margin-bottom:8px;">${g.agency} · ${g.id || ""}</div>
-      ${g.url ? `<a href="${g.url}" target="_blank" rel="noopener" style="text-decoration:underline;">Open station</a>` : ""}
+      <div style="opacity:.85;margin-bottom:8px;">USGS ${g.id} · NOAA ${g.noaaId || "—"}</div>
+      <a href="?g=${g.slug}" style="text-decoration:underline;">Open gauge</a>
     `;
 
     m.bindPopup(popup);
@@ -1511,18 +1545,14 @@ function ensureGaugeMap(){
     bounds.push([g.lat, g.lon]);
   }
 
-// Default view = Sea Bright gauge
-const def = GAUGES.find(g => String(g.id) === DEFAULT_GAUGE_ID);
+  if(GAUGE && Number.isFinite(Number(GAUGE.lat)) && Number.isFinite(Number(GAUGE.lon))){
+    _gaugeMap.setView([Number(GAUGE.lat), Number(GAUGE.lon)], DEFAULT_GAUGE_ZOOM);
+  } else if(bounds.length){
+    _gaugeMap.fitBounds(bounds, { padding:[30,30] });
+  } else {
+    _gaugeMap.setView([39.355, -74.438], 10);
+  }
 
-if(def){
-  _gaugeMap.setView([def.lat, def.lon], DEFAULT_GAUGE_ZOOM);
-} else if(bounds.length){
-  _gaugeMap.fitBounds(bounds, { padding:[30,30] });
-} else {
-  _gaugeMap.setView([40.2,-74.0], 9);
-}
-
-  // Fix initial render sizing issues (accordion hidden → shown)
   setTimeout(()=>_gaugeMap.invalidateSize(true), 100);
 }
 
@@ -1539,7 +1569,6 @@ function hookGaugeMapAccordion(){
     }
   });
 }
-
 /* DOM */
 const $=id=>document.getElementById(id);
 
@@ -2112,19 +2141,13 @@ function ceilToNext15MinISO(iso){
 
 
 // --- PETSS: try multiple possible output filenames (works on Pages + local) ---
-const PETSS_JSON_CANDIDATES = [
-  "data/petss_forecast.json",
-  "./data/petss_forecast.json",
-  "/data/petss_forecast.json",
-
-  // common variants if you name files per-station:
-  `data/petss_forecast_${COOPS_STATION}_mllw.json`,
-  `./data/petss_forecast_${COOPS_STATION}_mllw.json`,
-  `/data/petss_forecast_${COOPS_STATION}_mllw.json`,
-
-  // keep  old guess as a last resort
-  "data/petss_forecast_8536889_mllw.json"
-];
+function getPETSSJsonCandidates(){
+  return [
+    gaugeDataPath("petss_forecast.json"),
+    `./${gaugeDataPath("petss_forecast.json")}`,
+    `/${gaugeDataPath("petss_forecast.json")}`
+  ];
+}
 
 // returns parsed points in the format  chart expects: [{t, ft}]
 function normalizePetssJsonToPoints(json){
@@ -2171,7 +2194,7 @@ async function fetchFirstOkJson(urls){
 }
 
 async function fetchPETSSForecast_MLLW({ hours = 48 } = {}){
-  const { url, json } = await fetchFirstOkJson(PETSS_JSON_CANDIDATES);
+ const { url, json } = await fetchFirstOkJson(getPETSSJsonCandidates());
 
   const issuedTime =
     json?.model_time_utc ||
@@ -2243,8 +2266,15 @@ NOAA/NWS NWPS official forecast (SBIN4) -> we resample to 15-min later
 Replaces CO-OPS predictions block.
 Returns MLLW ft as [{t: ISO8601, ft: Number}] plus issuedTime for UI.
 ========================= */
-const NWPS_GAUGE = "SBIN4";
-const NWPS_STAGEFLOW_URL = `https://api.water.noaa.gov/nwps/v1/gauges/${NWPS_GAUGE}/stageflow`;
+function getNWPSGauge(){
+  return GAUGE?.noaaAcronym || null;
+}
+
+function getNWPSStageflowURL(){
+  const acr = getNWPSGauge();
+  if(!acr) return null;
+  return `https://api.water.noaa.gov/nwps/v1/gauges/${acr}/stageflow`;
+}
 
 /* Clip to N hours from the first point (keeps  existing 72h logic consistent). */
 function clipHoursFromFirst(points, hours){
@@ -2274,7 +2304,9 @@ function extractNWPSForecastSeries(json){
 }
 
 async function fetchNWPSpredictions_MLLW({ hours = 72 } = {}){
-  const res = await fetch(NWPS_STAGEFLOW_URL, { cache: "no-store" });
+  const url = getNWPSStageflowURL();
+if(!url) throw new Error("NWPS gauge acronym missing.");
+const res = await fetch(url, { cache: "no-store" });
   if(!res.ok) throw new Error("NWPS stageflow failed " + res.status);
 
   const j = await res.json();
@@ -4156,18 +4188,20 @@ JSON-BACKED HISTORY (NAVD88 PEAKS)
 ========================= */
 
 const PEAKS_JSON_FILE = "peaks_navd88.json";
-const PEAKS_JSON_PATH_CANDIDATES = [
-  `data/${PEAKS_JSON_FILE}`,
-  `./data/${PEAKS_JSON_FILE}`,
-  `../data/${PEAKS_JSON_FILE}`,
-  `/data/${PEAKS_JSON_FILE}`
-];
 
+function getPeaksJsonCandidates(){
+  const p = gaugeDataPath(PEAKS_JSON_FILE);
+  return [
+    p,
+    `./${p}`,
+    `/${p}`
+  ];
+}
 let PEAKS_JSON_URL = PEAKS_JSON_PATH_CANDIDATES[0];
 
 async function resolvePeaksJsonUrl(){
   const errs = [];
-  for(const u of PEAKS_JSON_PATH_CANDIDATES){
+  for(const u of getPeaksJsonCandidates()){
     try{
       const res = await fetch(`${u}?v=${Date.now()}`, { cache:"no-store" });
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
