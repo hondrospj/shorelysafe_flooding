@@ -6,7 +6,7 @@
   "run_dir": "petss.20260413",
   "cycle": "t12z",
   "source_url": "https://nomads.ncep.noaa.gov/pub/data/nccf/com/petss/prod/petss.20260413/petss.t12z.csv.tar.gz",
-  "updated_utc": "2026-04-13T19:39:44.597Z",
+  "updated_utc": "2026-04-13T22:03:31.251Z",
   "n_points": 223,
   "notes": "Ensemble mean plotted as TWL."
 }
