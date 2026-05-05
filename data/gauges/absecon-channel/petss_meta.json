@@ -4,9 +4,9 @@
   "gaugeSlug": "absecon-channel",
   "gaugeName": "Absecon Channel at Atlantic City",
   "run_dir": "petss.20260504",
-  "cycle": "t12z",
-  "source_url": "https://nomads.ncep.noaa.gov/pub/data/nccf/com/petss/prod/petss.20260504/petss.t12z.csv.tar.gz",
-  "updated_utc": "2026-05-04T22:15:17.004Z",
+  "cycle": "t18z",
+  "source_url": "https://nomads.ncep.noaa.gov/pub/data/nccf/com/petss/prod/petss.20260504/petss.t18z.csv.tar.gz",
+  "updated_utc": "2026-05-05T03:51:03.369Z",
   "n_points": 223,
   "notes": "Ensemble mean plotted as TWL."
 }
